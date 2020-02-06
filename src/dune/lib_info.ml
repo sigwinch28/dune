@@ -102,10 +102,34 @@ module Special_builtin_support = struct
         ]
   end
 
+  module Sites_locations = struct
+    type t =
+      { data_module : string
+      ; plugins : bool
+      }
+
+    let to_dyn { data_module; plugins } =
+      let open Dyn.Encoder in
+      record [ ("data_module", string data_module); ("plugins", bool plugins) ]
+
+    let decode =
+      let open Dune_lang.Decoder in
+      fields
+        (let+ data_module = field "data_module" string
+         and+ plugins = field_b "plugins" in
+         { data_module; plugins })
+
+    let encode { data_module; plugins } =
+      let open Dune_lang.Encoder in
+      record_fields
+        [ field "data_module" string data_module; field_b "plugins" plugins ]
+  end
+
   type t =
     | Findlib_dynload
     | Build_info of Build_info.t
     | Configurator of Configurator.t
+    | Sites_locations of Sites_locations.t
 
   let to_dyn x =
     let open Dyn.Encoder in
@@ -113,6 +137,8 @@ module Special_builtin_support = struct
     | Findlib_dynload -> constr "Findlib_dynload" []
     | Build_info info -> constr "Build_info" [ Build_info.to_dyn info ]
     | Configurator info -> constr "Configurator" [ Configurator.to_dyn info ]
+    | Sites_locations info ->
+      constr "Sites_locations" [ Sites_locations.to_dyn info ]
 
   let decode =
     let open Dune_lang.Decoder in
@@ -126,6 +152,11 @@ module Special_builtin_support = struct
         , let+ () = Dune_lang.Syntax.since Stanza.syntax (2, 3)
           and+ info = Configurator.decode in
           Configurator info )
+      ; ( "sites_locations"
+          (* , let+ () = Dune_lang.Syntax.since Stanza.syntax (2, 5) (* moving
+             dune's dune-project to 2.5 failed because of coq rules *) *)
+        , let+ info = Sites_locations.decode in
+          Sites_locations info )
       ]
 
   let encode t =
@@ -135,6 +166,9 @@ module Special_builtin_support = struct
       Dune_lang.List (Dune_lang.atom "build_info" :: Build_info.encode x)
     | Configurator x ->
       Dune_lang.List (Dune_lang.atom "configurator" :: Configurator.encode x)
+    | Sites_locations x ->
+      Dune_lang.List
+        (Dune_lang.atom "sites_locations" :: Sites_locations.encode x)
 end
 
 module Status = struct

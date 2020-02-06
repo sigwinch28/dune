@@ -9,4 +9,6 @@ type token =
   | Plus_equal
   | Eof
 
-val token : Lexing.lexbuf -> token
+type user_error = { user_error : 'a. Lexing.lexbuf -> string -> 'a }
+
+val token : user_error -> Lexing.lexbuf -> token

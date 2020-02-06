@@ -156,7 +156,12 @@ let test input =
      in
      let output = Buffer.add_subbytes buf in
      Artifact_substitution.copy
-       ~get_vcs:(fun _ -> None)
+       ~conf:
+         { get_vcs = (fun _ -> None)
+         ; get_location = (fun _ _ -> Path.root)
+         ; get_configPath = (fun _ -> None)
+         ; hardcodedOcamlPath = Hardcoded []
+         }
        ~input_file:(Path.of_string "<memory>")
        ~input ~output);
   let result = Buffer.contents buf in

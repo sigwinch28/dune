@@ -28,6 +28,10 @@ and predicate =
   | Pos of string
   | Neg of string
 
+val dyn_of_t : t -> Dyn.t
+
+val filter_variable : f:(string -> bool) -> t -> t
+
 val parse_entries : Lexing.lexbuf -> entry list
 
 (** Add version fields to all package in [t] that don't have and have at least
@@ -51,6 +55,8 @@ module Simplified : sig
 
   val to_dyn : t -> Dyn.t
 end
+
+val complexify : Simplified.t -> t
 
 val load : Path.t -> name:Package.Name.t option -> Simplified.t
 

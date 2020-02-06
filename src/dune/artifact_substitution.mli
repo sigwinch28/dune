@@ -2,12 +2,31 @@
 
 open Stdune
 
+type configpath =
+  | SourceRoot
+  | Stdlib
+
 (** A symbolic representation of the value to substitute to *)
 type t =
   | Vcs_describe of Path.Source.t
+  | Location of Section.t * Package.Name.t
+  | ConfigPath of configpath
+  | HardcodedOcamlPath
   | Repeat of int * string
       (** [Repeat (n, s)] evaluates to [s] repeated [n] times. This substitution
           is used for unit tests. *)
+
+type hardcodedOcamlPath =
+  | Hardcoded of Path.t list
+  | Relocatable of Path.t
+
+type conf =
+  { get_vcs : Path.Source.t -> Vcs.t option
+  ; get_location : Section.t -> Package.Name.t -> Path.t
+  ; get_configPath : configpath -> Path.t option
+  ; hardcodedOcamlPath : hardcodedOcamlPath
+        (** Initial prefix of installation when relocatable chosen *)
+  }
 
 val to_dyn : t -> Dyn.t
 
@@ -24,7 +43,7 @@ val decode : string -> t option
 
 (** Copy a file, performing all required substitutions *)
 val copy_file :
-     get_vcs:(Path.Source.t -> Vcs.t option)
+     conf:conf
   -> ?chmod:(int -> int)
   -> src:Path.t
   -> dst:Path.t
@@ -38,7 +57,7 @@ val copy_file :
     [input_file] is used only for debugging purposes. It must be the name of the
     source file. *)
 val copy :
-     get_vcs:(Path.Source.t -> Vcs.t option)
+     conf:conf
   -> input_file:Path.t
   -> input:(Bytes.t -> int -> int -> int)
   -> output:(Bytes.t -> int -> int -> unit)

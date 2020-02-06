@@ -10,18 +10,20 @@ type token =
   | Plus_equal
   | Eof
 
+type user_error = { user_error : 'a. Lexing.lexbuf -> string -> 'a }
+
 let escaped_buf = Buffer.create 256
 }
 
-rule token = parse
-  | [' ' '\t' '\r']* { token lexbuf }
-  | '#' [^ '\n']* { token lexbuf }
-  | '\n' { Lexing.new_line lexbuf; token lexbuf }
+rule token user_error = parse
+  | [' ' '\t' '\r']* { token user_error lexbuf }
+  | '#' [^ '\n']* { token user_error lexbuf }
+  | '\n' { Lexing.new_line lexbuf; token user_error lexbuf }
 
   | ['A'-'Z' 'a'-'z' '0'-'9' '_' '.']+ as s { Name s }
   | '"'
       { Buffer.clear escaped_buf;
-        string escaped_buf lexbuf }
+        string user_error escaped_buf lexbuf }
   | '-' { Minus }
   | '(' { Lparen }
   | ')' { Rparen }
@@ -29,21 +31,19 @@ rule token = parse
   | '=' { Equal }
   | "+=" { Plus_equal }
   | eof { Eof }
-  | _ { Stdune.User_error.raise ~loc:(Stdune.Loc.of_lexbuf lexbuf)
-          [ Stdune.Pp.text "invalid character" ] }
+  | _ { user_error.user_error lexbuf "invalid character" }
 
-and string buf = parse
+and string user_error buf = parse
   | '"'
       { String (Buffer.contents buf) }
   | "\\\n"
   | '\n'
       { Lexing.new_line lexbuf;
         Buffer.add_char buf '\n';
-        string buf lexbuf }
+        string user_error buf lexbuf }
   | '\\' (_ as c)
   | (_ as c)
       { Buffer.add_char buf c;
-        string buf lexbuf }
+        string user_error buf lexbuf }
   | eof
-      { Stdune.User_error.raise ~loc:(Stdune.Loc.of_lexbuf lexbuf)
-          [ Stdune.Pp.text "unterminated string" ] }
+      { user_error.user_error lexbuf "unterminated string" }

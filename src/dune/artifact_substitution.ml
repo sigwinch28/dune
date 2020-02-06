@@ -28,22 +28,73 @@ open Import
 
    Replacements that are too long are truncated. *)
 
+type configpath =
+  | SourceRoot
+  | Stdlib
+
 type t =
   | Vcs_describe of Path.Source.t
+  | Location of Section.t * Package.Name.t
+  | ConfigPath of configpath
+  | HardcodedOcamlPath
   | Repeat of int * string
+
+type hardcodedOcamlPath =
+  | Hardcoded of Path.t list
+  | Relocatable of Path.t
+
+type conf =
+  { get_vcs : Path.Source.t -> Vcs.t option
+  ; get_location : Section.t -> Package.Name.t -> Path.t
+  ; get_configPath : configpath -> Path.t option
+  ; hardcodedOcamlPath : hardcodedOcamlPath
+  }
 
 let to_dyn = function
   | Vcs_describe p -> Dyn.Variant ("Vcs_describe", [ Path.Source.to_dyn p ])
+  | Location (kind, lib_name) ->
+    Dyn.Variant
+      ("Location", [ Section.to_dyn kind; Package.Name.to_dyn lib_name ])
+  | ConfigPath d ->
+    let v =
+      match d with
+      | SourceRoot -> "SourceRoot"
+      | Stdlib -> "Stdlib"
+    in
+    Dyn.Variant ("ConfigPath", [ Dyn.Variant (v, []) ])
+  | HardcodedOcamlPath -> Dyn.Variant ("HardcodedOcamlPath", [])
   | Repeat (n, s) -> Dyn.Variant ("Repeat", [ Int n; String s ])
 
-let eval t ~get_vcs =
+let eval t ~conf =
+  let relocatable path =
+    (* return a relative path to the install directory in case of relocatable
+       instead of absolute path *)
+    match conf.hardcodedOcamlPath with
+    | Hardcoded _ -> Path.to_absolute_filename path
+    | Relocatable install -> Path.reach path ~from:install
+  in
   match t with
   | Repeat (n, s) ->
     Fiber.return (Array.make n s |> Array.to_list |> String.concat ~sep:"")
   | Vcs_describe p -> (
-    match get_vcs p with
+    match conf.get_vcs p with
     | None -> Fiber.return ""
     | Some vcs -> Vcs.describe vcs )
+  | Location (name, lib_name) ->
+    Fiber.return (relocatable (conf.get_location name lib_name))
+  | ConfigPath d ->
+    Fiber.return
+      (Option.value ~default:""
+         (let open Option.O in
+         let+ dir = conf.get_configPath d in
+         relocatable dir))
+  | HardcodedOcamlPath ->
+    Fiber.return
+      ( match conf.hardcodedOcamlPath with
+      | Relocatable _ -> "relocatable"
+      | Hardcoded l ->
+        let l = List.map l ~f:Path.to_absolute_filename in
+        "hardcoded\000" ^ String.concat ~sep:"\000" l )
 
 let encode_replacement ~len ~repl:s =
   let repl = sprintf "=%u:%s" (String.length s) s in
@@ -65,6 +116,13 @@ let encode ?(min_len = 0) t =
       | Vcs_describe p ->
         let s = Path.Source.to_string p in
         sprintf "vcs-describe:%d:%s" (String.length s) s
+      | Location (kind, name) ->
+        let name = Package.Name.to_string name in
+        sprintf "location:%s:%d:%s" (Section.to_string kind)
+          (String.length name) name
+      | ConfigPath SourceRoot -> sprintf "configpath:sourceroot:"
+      | ConfigPath Stdlib -> sprintf "configpath:stdlib:"
+      | HardcodedOcamlPath -> sprintf "hardcodedOcamlPath:"
       | Repeat (n, s) -> sprintf "repeat:%d:%d:%s" n (String.length s) s )
   in
   let len =
@@ -127,6 +185,13 @@ let decode s =
     | "vcs-describe" :: rest ->
       let path = Path.Source.of_string (read_string_payload rest) in
       Vcs_describe path
+    | "location" :: kind :: rest ->
+      let name = Package.Name.of_string (read_string_payload rest) in
+      let kind = Option.value_exn (Section.of_string kind) in
+      Location (kind, name)
+    | "configpath" :: "sourceroot" :: _ -> ConfigPath SourceRoot
+    | "configpath" :: "stdlib" :: _ -> ConfigPath Stdlib
+    | "hardcodedOcamlPath" :: _ -> HardcodedOcamlPath
     | "repeat" :: repeat :: rest ->
       Repeat (parse_int repeat, read_string_payload rest)
     | _ -> fail ()
@@ -329,7 +394,7 @@ output the replacement        |                                             |
  |                                                                          |
  \--------------------------------------------------------------------------/
     v} *)
-let copy ~get_vcs ~input_file ~input ~output =
+let copy ~conf ~input_file ~input ~output =
   let open Fiber.O in
   let rec loop scanner_state ~beginning_of_data ~pos ~end_of_data =
     let scanner_state = Scanner.run scanner_state ~buf ~pos ~end_of_data in
@@ -354,7 +419,7 @@ let copy ~get_vcs ~input_file ~input ~output =
       let placeholder = Bytes.sub_string buf ~pos:placeholder_start ~len in
       match decode placeholder with
       | Some t ->
-        let* s = eval t ~get_vcs in
+        let* s = eval t ~conf in
         ( if !Clflags.debug_artifact_substitution then
           let open Pp.O in
           Console.print
@@ -413,11 +478,10 @@ let copy ~get_vcs ~input_file ~input ~output =
   | 0 -> Fiber.return ()
   | n -> loop Scan0 ~beginning_of_data:0 ~pos:0 ~end_of_data:n
 
-let copy_file ~get_vcs ?chmod ~src ~dst () =
+let copy_file ~conf ?chmod ~src ~dst () =
   let ic, oc = Io.setup_copy ?chmod ~src ~dst () in
   Fiber.finalize
     ~finally:(fun () ->
       Io.close_both (ic, oc);
       Fiber.return ())
-    (fun () ->
-      copy ~get_vcs ~input_file:src ~input:(input ic) ~output:(output oc))
+    (fun () -> copy ~conf ~input_file:src ~input:(input ic) ~output:(output oc))
